@@ -1,0 +1,128 @@
+version: 2
+
+sources:
+  - name: raw_data
+    description: "Raw data loaded from NYC TLC Open Data API via Airflow ingestion pipeline."
+    database: nyc_taxi_lakehouse
+    schema: raw_data
+    tables:
+      - name: nyc_taxi_trips
+        description: "Raw NYC Yellow Taxi trip records loaded from monthly Parquet files published by the NYC Taxi & Limousine Commission."
+        columns:
+          - name: vendorid
+            description: "A code indicating the TPEP provider. 1=Creative Mobile Technologies, 2=VeriFone Inc."
+          - name: tpep_pickup_datetime
+            description: "Date and time when the meter was engaged (trip started)."
+          - name: tpep_dropoff_datetime
+            description: "Date and time when the meter was disengaged (trip ended)."
+          - name: passenger_count
+            description: "Number of passengers in the vehicle. Driver-entered value."
+          - name: trip_distance
+            description: "Elapsed trip distance in miles reported by the taximeter."
+          - name: ratecodeid
+            description: "Final rate code in effect at end of trip. 1=Standard, 2=JFK, 3=Newark, 4=Nassau/Westchester, 5=Negotiated, 6=Group ride."
+          - name: store_and_fwd_flag
+            description: "Whether the trip record was held in vehicle memory before sending to vendor. Y=store and forward, N=not a store and forward trip."
+          - name: pulocationid
+            description: "TLC Taxi Zone where the taximeter was engaged (pickup location)."
+          - name: dolocationid
+            description: "TLC Taxi Zone where the taximeter was disengaged (dropoff location)."
+          - name: payment_type
+            description: "Numeric code signifying how the passenger paid. 1=Credit card, 2=Cash, 3=No charge, 4=Dispute, 5=Unknown, 6=Voided trip."
+          - name: fare_amount
+            description: "The time-and-distance fare calculated by the meter."
+          - name: extra
+            description: "Miscellaneous extras and surcharges. Currently only includes $0.50 and $1 rush hour and overnight charges."
+          - name: mta_tax
+            description: "$0.50 MTA tax that is automatically triggered based on the metered rate in use."
+          - name: tip_amount
+            description: "Tip amount. This field is automatically populated for credit card tips. Cash tips are not included."
+          - name: tolls_amount
+            description: "Total amount of all tolls paid in trip."
+          - name: improvement_surcharge
+            description: "$0.30 improvement surcharge assessed trips at the flag drop."
+          - name: total_amount
+            description: "Total amount charged to passengers. Does not include cash tips."
+          - name: congestion_surcharge
+            description: "Total amount collected in trip for NYS congestion surcharge."
+          - name: airport_fee
+            description: "$1.25 for pick up only at LaGuardia and John F. Kennedy Airports."
+
+      - name: nyc_taxi_zones
+        description: "NYC Taxi zone lookup table mapping LocationID to borough and zone name."
+        columns:
+          - name: locationid
+            description: "Unique TLC Taxi Zone identifier."
+            tests:
+              - unique
+              - not_null
+          - name: borough
+            description: "NYC borough name (Manhattan, Brooklyn, Queens, Bronx, Staten Island, EWR)."
+          - name: zone
+            description: "Specific zone name within the borough."
+          - name: service_zone
+            description: "Service zone classification (Yellow Zone, Boro Zone, Airports, EWR)."
+
+models:
+  - name: bronze_taxi_trips
+    description: "Bronze layer: raw NYC Yellow Taxi trip records with ingestion metadata columns appended. No transformations applied - source of truth for all downstream models."
+    columns:
+      - name: vendorid
+        description: "TPEP provider code. 1=Creative Mobile Technologies LLC, 2=VeriFone Inc."
+        tests:
+          - not_null
+          - accepted_values:
+              values: [1, 2]
+      - name: tpep_pickup_datetime
+        description: "Pickup timestamp when meter was engaged."
+        tests:
+          - not_null
+      - name: tpep_dropoff_datetime
+        description: "Dropoff timestamp when meter was disengaged."
+        tests:
+          - not_null
+      - name: pulocationid
+        description: "Pickup TLC Taxi Zone ID."
+        tests:
+          - not_null
+      - name: dolocationid
+        description: "Dropoff TLC Taxi Zone ID."
+        tests:
+          - not_null
+      - name: total_amount
+        description: "Total fare amount charged to passenger."
+        tests:
+          - not_null
+      - name: _loaded_at
+        description: "Timestamp when this record was loaded into the bronze layer."
+        tests:
+          - not_null
+      - name: _source
+        description: "Identifier for the data source system."
+        tests:
+          - not_null
+      - name: _file_name
+        description: "Name of the source file this record was loaded from."
+        tests:
+          - not_null
+
+  - name: bronze_taxi_zones
+    description: "Bronze layer: raw NYC Taxi Zone lookup records with ingestion metadata appended. Reference table used to map location IDs to human-readable names."
+    columns:
+      - name: locationid
+        description: "Unique TLC Taxi Zone identifier - primary key."
+        tests:
+          - unique
+          - not_null
+      - name: borough
+        description: "NYC borough name."
+        tests:
+          - not_null
+      - name: zone
+        description: "Specific zone name within borough."
+        tests:
+          - not_null
+      - name: _loaded_at
+        description: "Timestamp when this record was loaded into the bronze layer."
+        tests:
+          - not_null

@@ -1,0 +1,37 @@
+name: nyc_taxi_lakehouse
+version: '1.0.0'
+config-version: 2
+
+profile: nyc_taxi_lakehouse
+
+model-paths: ["models"]
+test-paths: ["tests"]
+macro-paths: ["macros"]
+seed-paths: ["seeds"]
+analysis-paths: ["analyses"]
+snapshot-paths: ["snapshots"]
+
+target-path: "target"
+clean-targets:
+  - "target"
+  - "dbt_packages"
+
+models:
+  nyc_taxi_lakehouse:
+    bronze:
+      +materialized: table
+      +schema: bronze
+      +tags: ["bronze", "raw"]
+    silver:
+      +materialized: table
+      +schema: silver
+      +tags: ["silver", "cleaned"]
+    gold:
+      +materialized: table
+      +schema: gold
+      +tags: ["gold", "analytics"]
+
+vars:
+  nyc_taxi_lookback_days: 30
+  nyc_taxi_min_trip_distance: 0.0
+  nyc_taxi_max_trip_duration_minutes: 300

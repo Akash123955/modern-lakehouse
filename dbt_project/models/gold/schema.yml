@@ -1,0 +1,230 @@
+version: 2
+
+models:
+  - name: gold_daily_trip_summary
+    description: >
+      Gold layer: daily NYC Yellow Taxi trip KPIs aggregated by trip date and pickup borough.
+      Provides executive-level metrics for operational dashboards and revenue reporting.
+      Grain: one row per (trip_date, pickup_borough).
+    columns:
+      - name: trip_date
+        description: "Calendar date of the trip (derived from pickup_datetime)."
+        tests:
+          - not_null
+
+      - name: pickup_borough
+        description: "NYC borough where trips originated."
+        tests:
+          - not_null
+
+      - name: total_trips
+        description: "Total number of valid trips on this date and borough."
+        tests:
+          - not_null
+          - dbt_utils.expression_is_true:
+              expression: "> 0"
+
+      - name: total_revenue
+        description: "Sum of total_amount across all trips."
+        tests:
+          - not_null
+          - dbt_utils.expression_is_true:
+              expression: "> 0"
+
+      - name: avg_fare_amount
+        description: "Average base fare amount across all trips."
+        tests:
+          - not_null
+
+      - name: avg_tip_amount
+        description: "Average tip amount (credit card tips only)."
+        tests:
+          - not_null
+
+      - name: avg_trip_distance
+        description: "Average trip distance in miles."
+        tests:
+          - not_null
+
+      - name: avg_trip_duration_minutes
+        description: "Average trip duration in minutes."
+        tests:
+          - not_null
+
+      - name: avg_speed_mph
+        description: "Average trip speed in miles per hour."
+
+      - name: total_passengers
+        description: "Total passenger count across all trips."
+        tests:
+          - not_null
+
+      - name: airport_trips_count
+        description: "Number of trips using the JFK airport rate code."
+        tests:
+          - not_null
+
+      - name: credit_card_trips
+        description: "Number of trips paid by credit card."
+        tests:
+          - not_null
+
+      - name: cash_trips
+        description: "Number of trips paid by cash."
+        tests:
+          - not_null
+
+      - name: airport_trip_pct
+        description: "Airport trips as a percentage of total trips."
+
+      - name: credit_card_pct
+        description: "Credit card trips as a percentage of total trips."
+
+  - name: gold_hourly_demand
+    description: >
+      Gold layer: hourly demand patterns for NYC Yellow Taxi trips broken down by
+      hour of day (0-23), day of week (Monday-Sunday), and pickup borough.
+      Uses window functions to flag the top 20% busiest hours per borough as peak hours.
+      Grain: one row per (trip_hour, day_of_week_num, pickup_borough).
+    columns:
+      - name: trip_hour
+        description: "Hour of day (0-23) when the trip was picked up."
+        tests:
+          - not_null
+
+      - name: day_of_week_num
+        description: "Numeric day of week (1=Sunday, 7=Saturday in Snowflake)."
+        tests:
+          - not_null
+
+      - name: day_of_week_name
+        description: "Human-readable day name (Monday through Sunday)."
+        tests:
+          - not_null
+
+      - name: pickup_borough
+        description: "NYC borough where trips originated."
+        tests:
+          - not_null
+
+      - name: total_trips
+        description: "Total trips in this hour/day/borough combination."
+        tests:
+          - not_null
+          - dbt_utils.expression_is_true:
+              expression: "> 0"
+
+      - name: avg_trip_duration_minutes
+        description: "Average trip duration for this time slot."
+
+      - name: avg_wait_efficiency
+        description: "Average trips per distinct zone per hour - proxy for service density."
+
+      - name: peak_hour_flag
+        description: "TRUE if this hour is in the top 20% by volume for its borough/day combination."
+        tests:
+          - not_null
+
+      - name: volume_percentile_rank
+        description: "Percentile rank (0-100) of this hour's volume within its borough/day combination."
+        tests:
+          - not_null
+
+  - name: gold_zone_performance
+    description: >
+      Gold layer: zone-level performance metrics for all 265 NYC Taxi zones.
+      Includes pickup/dropoff volumes, average fares, most common destinations,
+      revenue rankings within borough, and rolling 30-day trip counts.
+      Grain: one row per zone_id.
+    columns:
+      - name: zone_id
+        description: "TLC Taxi Zone identifier - primary key."
+        tests:
+          - unique
+          - not_null
+
+      - name: zone_name
+        description: "Zone name from the TLC zone lookup."
+        tests:
+          - not_null
+
+      - name: borough
+        description: "NYC borough this zone belongs to."
+        tests:
+          - not_null
+
+      - name: total_pickups
+        description: "Total number of trips that originated in this zone."
+        tests:
+          - not_null
+
+      - name: total_dropoffs
+        description: "Total number of trips that ended in this zone."
+        tests:
+          - not_null
+
+      - name: avg_fare_from_zone
+        description: "Average fare for trips originating in this zone."
+
+      - name: avg_fare_to_zone
+        description: "Average fare for trips ending in this zone."
+
+      - name: total_revenue_from_zone
+        description: "Total revenue from all trips originating in this zone."
+        tests:
+          - not_null
+
+      - name: trip_count_last_30_days
+        description: "Number of trips from this zone in the last 30 days."
+        tests:
+          - not_null
+
+      - name: most_common_destination
+        description: "Zone name of the most frequent dropoff destination from this zone."
+
+      - name: revenue_rank
+        description: "Revenue rank within the borough (1 = highest revenue zone in that borough)."
+        tests:
+          - not_null
+
+  - name: gold_driver_economics
+    description: >
+      Gold layer: driver and vendor economics model breaking down fare efficiency,
+      tipping behavior, and revenue contribution by vendor name and payment type.
+      Grain: one row per (vendor_name, payment_type_desc).
+    columns:
+      - name: vendor_name
+        description: "Human-readable vendor name."
+        tests:
+          - not_null
+
+      - name: payment_type_desc
+        description: "Human-readable payment type description."
+        tests:
+          - not_null
+
+      - name: total_trips
+        description: "Total number of trips for this vendor/payment combination."
+        tests:
+          - not_null
+
+      - name: total_revenue
+        description: "Total revenue for this vendor/payment combination."
+        tests:
+          - not_null
+
+      - name: avg_fare_per_mile
+        description: "Average fare charged per mile for this vendor/payment type."
+
+      - name: avg_tip_percentage
+        description: "Average tip as a percentage of fare. Only populated for credit card payments."
+
+      - name: avg_trips_per_hour
+        description: "Estimated average trips handled per hour by this vendor (across payment types)."
+        tests:
+          - not_null
+
+      - name: total_revenue_share_pct
+        description: "This segment's revenue as a percentage of all revenue."
+        tests:
+          - not_null
