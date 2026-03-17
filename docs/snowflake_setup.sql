@@ -132,7 +132,7 @@ GRANT ROLE nyc_taxi_role TO USER nyc_taxi_user;
 -- SECTION 5: Raw Data Tables
 -- =============================================================================
 
-USE ROLE nyc_taxi_role;
+USE ROLE SYSADMIN;
 USE WAREHOUSE nyc_taxi_wh;
 USE DATABASE nyc_taxi_lakehouse;
 USE SCHEMA raw_data;

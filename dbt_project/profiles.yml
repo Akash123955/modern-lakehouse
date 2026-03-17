@@ -3,26 +3,26 @@ nyc_taxi_lakehouse:
   outputs:
     dev:
       type: snowflake
-      account: "{{ env_var('SNOWFLAKE_ACCOUNT') }}"
-      user: "{{ env_var('SNOWFLAKE_USER') }}"
-      password: "{{ env_var('SNOWFLAKE_PASSWORD') }}"
-      role: "{{ env_var('SNOWFLAKE_ROLE', 'nyc_taxi_role') }}"
-      warehouse: "{{ env_var('SNOWFLAKE_WAREHOUSE', 'nyc_taxi_wh') }}"
-      database: "{{ env_var('SNOWFLAKE_DATABASE', 'nyc_taxi_lakehouse') }}"
-      schema: "{{ env_var('SNOWFLAKE_SCHEMA', 'raw_data') }}"
+      account: tyczfui-mhc52087
+      user: nyc_taxi_user
+      password: "Lakehouse@2024!"
+      role: nyc_taxi_role
+      warehouse: nyc_taxi_wh
+      database: nyc_taxi_lakehouse
+      schema: raw_data
       threads: 4
       client_session_keep_alive: false
       query_tag: dbt_dev
 
     prod:
       type: snowflake
-      account: "{{ env_var('SNOWFLAKE_ACCOUNT') }}"
-      user: "{{ env_var('SNOWFLAKE_USER') }}"
-      password: "{{ env_var('SNOWFLAKE_PASSWORD') }}"
-      role: "{{ env_var('SNOWFLAKE_ROLE', 'nyc_taxi_role') }}"
-      warehouse: "{{ env_var('SNOWFLAKE_WAREHOUSE', 'nyc_taxi_wh') }}"
-      database: "{{ env_var('SNOWFLAKE_DATABASE', 'nyc_taxi_lakehouse') }}"
-      schema: "{{ env_var('SNOWFLAKE_SCHEMA', 'raw_data') }}"
+      account: tyczfui-mhc52087
+      user: nyc_taxi_user
+      password: "Lakehouse@2024!"
+      role: nyc_taxi_role
+      warehouse: nyc_taxi_wh
+      database: nyc_taxi_lakehouse
+      schema: raw_data
       threads: 8
       client_session_keep_alive: false
       query_tag: dbt_prod
