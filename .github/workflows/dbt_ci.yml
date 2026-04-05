@@ -1,0 +1,161 @@
+##############################################################################
+# CI Workflow: dbt Pull Request Checks
+#
+# Triggered on every PR targeting main. Runs slim CI using dbt's state-based
+# selection — only compiles and tests models that changed in this PR.
+# This prevents long CI runtimes as the project grows.
+#
+# Required GitHub Secrets:
+#   SNOWFLAKE_ACCOUNT     - Snowflake account identifier
+#   SNOWFLAKE_USER        - CI service account username
+#   SNOWFLAKE_PASSWORD    - CI service account password
+#   SNOWFLAKE_ROLE        - Role for CI (read-only recommended)
+#   SNOWFLAKE_WAREHOUSE   - Warehouse for CI runs
+#   SNOWFLAKE_DATABASE    - Target database
+##############################################################################
+
+name: dbt CI — PR Checks
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "dbt_project/**"
+      - ".github/workflows/dbt_ci.yml"
+
+env:
+  DBT_PROJECT_DIR: ./dbt_project
+  DBT_PROFILES_DIR: ./dbt_project
+  DBT_TARGET: ci
+
+jobs:
+  dbt-ci:
+    name: Lint, Compile & Test Changed Models
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout PR branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # full history needed for state comparison
+
+      - name: Checkout main branch for state comparison
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          path: main_branch
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dbt-snowflake
+        run: pip install dbt-snowflake==1.7.2
+
+      - name: Write dbt profiles for CI
+        env:
+          SNOWFLAKE_ACCOUNT: ${{ secrets.SNOWFLAKE_ACCOUNT }}
+          SNOWFLAKE_USER: ${{ secrets.SNOWFLAKE_USER }}
+          SNOWFLAKE_PASSWORD: ${{ secrets.SNOWFLAKE_PASSWORD }}
+          SNOWFLAKE_ROLE: ${{ secrets.SNOWFLAKE_ROLE }}
+          SNOWFLAKE_WAREHOUSE: ${{ secrets.SNOWFLAKE_WAREHOUSE }}
+          SNOWFLAKE_DATABASE: ${{ secrets.SNOWFLAKE_DATABASE }}
+        run: |
+          cat > ${{ env.DBT_PROFILES_DIR }}/profiles.yml << EOF
+          nyc_taxi_lakehouse:
+            target: ci
+            outputs:
+              ci:
+                type: snowflake
+                account: ${SNOWFLAKE_ACCOUNT}
+                user: ${SNOWFLAKE_USER}
+                password: ${SNOWFLAKE_PASSWORD}
+                role: ${SNOWFLAKE_ROLE}
+                warehouse: ${SNOWFLAKE_WAREHOUSE}
+                database: ${SNOWFLAKE_DATABASE}
+                schema: ci_${{ github.event.pull_request.number }}
+                threads: 4
+                query_tag: dbt_ci_pr_${{ github.event.pull_request.number }}
+          EOF
+
+      - name: Install dbt packages
+        working-directory: ${{ env.DBT_PROJECT_DIR }}
+        run: dbt deps
+
+      - name: dbt compile (full project — catch syntax errors)
+        working-directory: ${{ env.DBT_PROJECT_DIR }}
+        run: |
+          dbt compile \
+            --profiles-dir . \
+            --no-partial-parse
+
+      - name: Generate manifest from main (for slim CI state)
+        working-directory: main_branch/dbt_project
+        env:
+          SNOWFLAKE_ACCOUNT: ${{ secrets.SNOWFLAKE_ACCOUNT }}
+          SNOWFLAKE_USER: ${{ secrets.SNOWFLAKE_USER }}
+          SNOWFLAKE_PASSWORD: ${{ secrets.SNOWFLAKE_PASSWORD }}
+          SNOWFLAKE_ROLE: ${{ secrets.SNOWFLAKE_ROLE }}
+          SNOWFLAKE_WAREHOUSE: ${{ secrets.SNOWFLAKE_WAREHOUSE }}
+          SNOWFLAKE_DATABASE: ${{ secrets.SNOWFLAKE_DATABASE }}
+        run: |
+          pip install dbt-snowflake==1.7.2 --quiet
+          dbt deps
+          dbt compile --profiles-dir . --no-partial-parse
+          cp target/manifest.json /tmp/main_manifest.json
+
+      - name: dbt run — changed models only (slim CI)
+        working-directory: ${{ env.DBT_PROJECT_DIR }}
+        run: |
+          dbt run \
+            --profiles-dir . \
+            --select "state:modified+" \
+            --defer \
+            --state /tmp/main_manifest.json \
+            --no-partial-parse \
+            --vars '{"nyc_taxi_lookback_days": 7}'
+
+      - name: dbt test — changed models only
+        working-directory: ${{ env.DBT_PROJECT_DIR }}
+        run: |
+          dbt test \
+            --profiles-dir . \
+            --select "state:modified+" \
+            --defer \
+            --state /tmp/main_manifest.json \
+            --no-partial-parse
+
+      - name: Post CI summary to PR
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const outcome = '${{ job.status }}';
+            const icon = outcome === 'success' ? '✅' : '❌';
+            const body = `## ${icon} dbt CI — ${outcome.toUpperCase()}
+
+            | Check | Status |
+            |-------|--------|
+            | dbt compile | ${{ steps.compile.outcome || 'completed' }} |
+            | dbt run (changed models) | ${{ job.status }} |
+            | dbt test (changed models) | ${{ job.status }} |
+
+            > PR #${{ github.event.pull_request.number }} · Only modified models were tested (slim CI)`;
+
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: body
+            });
+
+      - name: Cleanup CI schema
+        if: always()
+        working-directory: ${{ env.DBT_PROJECT_DIR }}
+        run: |
+          dbt run-operation drop_schema \
+            --args "{'schema_name': 'ci_${{ github.event.pull_request.number }}'}" \
+            --profiles-dir . || echo "Schema cleanup skipped"

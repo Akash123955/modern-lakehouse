@@ -10,7 +10,9 @@
 
 {{
     config(
-        materialized='table',
+        materialized='incremental',
+        unique_key=['trip_date', 'pickup_borough'],
+        incremental_strategy='delete+insert',
         schema='gold',
         tags=['gold', 'nyc_taxi', 'daily', 'summary', 'analytics'],
         comment='Daily NYC Taxi trip KPIs aggregated by date and pickup borough'
@@ -35,6 +37,12 @@ WITH trips AS (
         t.payment_type_desc
 
     FROM {{ ref('silver_taxi_trips') }} t
+
+    {% if is_incremental() %}
+    -- On incremental runs, recompute the last 3 days to catch any late-arriving data.
+    -- delete+insert strategy ensures aggregates are always recalculated cleanly.
+    WHERE CAST(t.pickup_datetime AS DATE) >= DATEADD(day, -3, CURRENT_DATE())
+    {% endif %}
 
 ),
 

@@ -1,0 +1,183 @@
+##############################################################################
+# CD Workflow: dbt Production Deploy
+#
+# Triggered on every push to main (i.e., merged PR).
+# Runs only models that changed vs the previous production manifest using
+# dbt's state:modified+ selector — safe, fast, incremental deploys.
+#
+# Deploy strategy:
+#   1. Run changed models and their downstream dependents (+)
+#   2. Test all changed models
+#   3. Run dbt snapshots (SCD Type 2)
+#   4. Generate and upload updated docs artifact
+#
+# Required GitHub Secrets: same as CI workflow
+##############################################################################
+
+name: dbt CD — Production Deploy
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "dbt_project/**"
+
+env:
+  DBT_PROJECT_DIR: ./dbt_project
+  DBT_PROFILES_DIR: ./dbt_project
+  DBT_TARGET: prod
+
+jobs:
+  dbt-deploy:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    environment: production
+
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dbt-snowflake
+        run: pip install dbt-snowflake==1.7.2
+
+      - name: Write dbt profiles for production
+        env:
+          SNOWFLAKE_ACCOUNT: ${{ secrets.SNOWFLAKE_ACCOUNT }}
+          SNOWFLAKE_USER: ${{ secrets.SNOWFLAKE_USER }}
+          SNOWFLAKE_PASSWORD: ${{ secrets.SNOWFLAKE_PASSWORD }}
+          SNOWFLAKE_ROLE: ${{ secrets.SNOWFLAKE_ROLE }}
+          SNOWFLAKE_WAREHOUSE: ${{ secrets.SNOWFLAKE_WAREHOUSE }}
+          SNOWFLAKE_DATABASE: ${{ secrets.SNOWFLAKE_DATABASE }}
+        run: |
+          cat > ${{ env.DBT_PROFILES_DIR }}/profiles.yml << EOF
+          nyc_taxi_lakehouse:
+            target: prod
+            outputs:
+              prod:
+                type: snowflake
+                account: ${SNOWFLAKE_ACCOUNT}
+                user: ${SNOWFLAKE_USER}
+                password: ${SNOWFLAKE_PASSWORD}
+                role: ${SNOWFLAKE_ROLE}
+                warehouse: ${SNOWFLAKE_WAREHOUSE}
+                database: ${SNOWFLAKE_DATABASE}
+                schema: raw_data
+                threads: 8
+                query_tag: dbt_prod_cd
+          EOF
+
+      - name: Install dbt packages
+        working-directory: ${{ env.DBT_PROJECT_DIR }}
+        run: dbt deps
+
+      - name: Download previous production manifest (for state comparison)
+        uses: actions/download-artifact@v4
+        with:
+          name: prod-manifest
+          path: /tmp/prod_state
+        continue-on-error: true  # First deploy won't have a previous manifest
+
+      - name: dbt run — changed models + downstream
+        working-directory: ${{ env.DBT_PROJECT_DIR }}
+        run: |
+          if [ -f /tmp/prod_state/manifest.json ]; then
+            echo "Running slim deploy — changed models + downstream only"
+            dbt run \
+              --profiles-dir . \
+              --target prod \
+              --select "state:modified+" \
+              --defer \
+              --state /tmp/prod_state \
+              --no-partial-parse
+          else
+            echo "No previous manifest found — running full deploy"
+            dbt run \
+              --profiles-dir . \
+              --target prod \
+              --no-partial-parse
+          fi
+
+      - name: dbt test — all models
+        working-directory: ${{ env.DBT_PROJECT_DIR }}
+        run: |
+          dbt test \
+            --profiles-dir . \
+            --target prod \
+            --no-partial-parse
+
+      - name: dbt snapshot — SCD Type 2 zones
+        working-directory: ${{ env.DBT_PROJECT_DIR }}
+        run: |
+          dbt snapshot \
+            --profiles-dir . \
+            --target prod
+
+      - name: Generate dbt docs
+        working-directory: ${{ env.DBT_PROJECT_DIR }}
+        run: |
+          dbt docs generate \
+            --profiles-dir . \
+            --target prod
+
+      - name: Upload production manifest (for next deploy's state comparison)
+        uses: actions/upload-artifact@v4
+        with:
+          name: prod-manifest
+          path: ${{ env.DBT_PROJECT_DIR }}/target/manifest.json
+          retention-days: 90
+
+      - name: Upload dbt docs artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dbt-docs-${{ github.sha }}
+          path: ${{ env.DBT_PROJECT_DIR }}/target/
+          retention-days: 30
+
+      - name: Notify Slack on deploy success
+        if: success()
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: |
+          if [ -n "$SLACK_WEBHOOK_URL" ]; then
+            curl -s -X POST "$SLACK_WEBHOOK_URL" \
+              -H "Content-Type: application/json" \
+              -d '{
+                "text": "✅ *dbt Production Deploy Succeeded*",
+                "attachments": [{
+                  "color": "good",
+                  "fields": [
+                    {"title": "Branch", "value": "main", "short": true},
+                    {"title": "Commit", "value": "${{ github.sha }}", "short": true},
+                    {"title": "Triggered by", "value": "${{ github.actor }}", "short": true}
+                  ]
+                }]
+              }'
+          fi
+
+      - name: Notify Slack on deploy failure
+        if: failure()
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: |
+          if [ -n "$SLACK_WEBHOOK_URL" ]; then
+            curl -s -X POST "$SLACK_WEBHOOK_URL" \
+              -H "Content-Type: application/json" \
+              -d '{
+                "text": "🚨 *dbt Production Deploy FAILED*",
+                "attachments": [{
+                  "color": "danger",
+                  "fields": [
+                    {"title": "Commit", "value": "${{ github.sha }}", "short": true},
+                    {"title": "Actor", "value": "${{ github.actor }}", "short": true},
+                    {"title": "Logs", "value": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}", "short": false}
+                  ]
+                }]
+              }'
+          fi
